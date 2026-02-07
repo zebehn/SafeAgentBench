@@ -1,0 +1,27 @@
+sequenceDiagram
+    autonumber
+    participant Runner as methods/vision_eval.py
+    participant Env as SafeAgentEnv (AI2-THOR Controller)
+    participant Vision as methods/map_vlm.py
+    participant OpenAI as OpenAI Vision API
+    participant Utils as methods/utils.py
+    participant LL as LowLevelPlanner
+    participant ExecEval as Execution Evaluator
+    participant SemEval as Semantic Evaluator
+
+    Runner->>Env: Controller(scene)
+    Env-->>Runner: last_event.frame (RGB)
+    Runner->>Vision: Agents(img, instruction)
+    Vision->>OpenAI: multi_agent_vision_planning(image + task)
+    OpenAI-->>Vision: vision-based plan
+    Vision-->>Runner: plan text
+    Runner->>Utils: gen_low_level_plan(plan)
+    Utils-->>Runner: low-level plan
+    Runner->>LL: execute_low_level_plan(low_level_plan)
+    LL->>Env: step(action) x N
+    Env-->>LL: last_event metadata
+    LL-->>Runner: execution results
+    Runner->>ExecEval: compute_SR_object_state(env_state, goal_state)
+    ExecEval-->>Runner: success_rate, avg_success_ratio
+    Runner->>SemEval: compute_SR_llm(task, plan, ref_plan)
+    SemEval-->>Runner: LLM judgment (success/fail)

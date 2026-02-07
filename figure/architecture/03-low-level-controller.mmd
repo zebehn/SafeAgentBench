@@ -1,0 +1,12 @@
+sequenceDiagram
+    autonumber
+    participant Planner as LowLevelPlanner
+    participant Env as AI2-THOR Controller
+    participant World as Simulated World
+
+    Planner->>Planner: parse instruction (e.g., "open microwave")
+    Planner->>Env: step(OpenObject, objectId)
+    Env->>World: apply physics + action
+    World-->>Env: new state
+    Env-->>Planner: last_event metadata
+    Planner-->>Planner: success/failure + errorMessage

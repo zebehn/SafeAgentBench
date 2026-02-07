@@ -1,0 +1,25 @@
+sequenceDiagram
+    autonumber
+    participant User as User/Runner
+    participant Dataset as Dataset (jsonl)
+    participant Planner as LLM Planner
+    participant Utils as methods/utils.py
+    participant Env as SafeAgentEnv (AI2-THOR Controller)
+    participant LL as LowLevelPlanner
+    participant ExecEval as Execution Evaluator
+    participant SemEval as Semantic Evaluator
+
+    User->>Dataset: Load task (instruction, scene, goal, ref steps)
+    User->>Env: Controller(scene)
+    User->>Planner: Generate high-level plan from instruction
+    Planner-->>User: High-level plan
+    User->>Utils: gen_low_level_plan(plan)
+    Utils-->>User: Low-level plan
+    User->>LL: execute_low_level_plan(low_level_plan)
+    LL->>Env: step(action) x N
+    Env-->>LL: last_event metadata
+    LL-->>User: execution results
+    User->>ExecEval: compute_SR_object_state(env_state, goal_state)
+    ExecEval-->>User: success_rate, avg_success_ratio
+    User->>SemEval: compute_SR_llm(task, plan, ref_plan)
+    SemEval-->>User: LLM judgment (success/fail)

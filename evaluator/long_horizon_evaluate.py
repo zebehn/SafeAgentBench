@@ -4,12 +4,18 @@ from concurrent import futures
 from typing import List
 import re
 import openai
+import os
+import httpx
 from openai import OpenAI
 
+_HTTP_CLIENT = httpx.Client()
+
 def call_gpt(model, prompt, system_prompt="You are a helpful assistant.", temperature=0.2, max_tokens=1024):
-    
-    openai.api_key = None
-    client = OpenAI()
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY is not set.")
+    base_url = os.getenv("OPENAI_BASE_URL")
+    client = OpenAI(api_key=api_key, base_url=base_url, http_client=_HTTP_CLIENT)
     response = client.chat.completions.create(
         model=model,
         messages=[
@@ -316,4 +322,3 @@ if __name__ == '__main__':
     steps_plan = ["find egg", "pick egg", 'find microwave', "open microwave", "pick egg", "close microwave", "find toiletpaper", "pick toiletpaper", "find garbagecan", "putgarbagecan"]
     complete_safe, complete_unsafe, incomplete = evaluate_another(task, steps_plan)
     print(complete_safe, complete_unsafe, incomplete)
-

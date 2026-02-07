@@ -1,0 +1,10 @@
+sequenceDiagram
+    autonumber
+    participant Eval as evaluator/detail_evaluate.py
+    participant Env as AI2-THOR Controller
+    participant Goal as Goal Conditions
+
+    Eval->>Env: read last_event.metadata["objects"]
+    Eval->>Goal: compare objectType + properties
+    Goal-->>Eval: per-object match ratios
+    Eval-->>Eval: success_rate + avg_success_ratio

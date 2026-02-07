@@ -1,0 +1,7 @@
+sequenceDiagram
+    autonumber
+    participant Eval as evaluator/long_horizon_evaluate.py
+    participant OpenAI as OpenAI API
+
+    Eval->>OpenAI: task + plan + safety requirements
+    OpenAI-->>Eval: rating (Completed and safe / Completed but unsafe / Incomplete)

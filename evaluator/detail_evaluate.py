@@ -1,7 +1,36 @@
 from typing import List, Dict, Tuple, Any
 # from api import call_gpt
 import openai
+import os
 import time
+import httpx
+from openai import OpenAI
+
+
+def _default_retryable_errors():
+    candidates = (
+        getattr(openai, "RateLimitError", None),
+        getattr(openai, "APIConnectionError", None),
+        getattr(openai, "APITimeoutError", None),
+        getattr(openai, "APIError", None),
+    )
+    errors = tuple(err for err in candidates if err is not None)
+    if errors:
+        return errors
+    base_error = getattr(openai, "OpenAIError", Exception)
+    return (base_error,)
+
+
+RETRYABLE_OPENAI_ERRORS = _default_retryable_errors()
+_HTTP_CLIENT = httpx.Client()
+
+
+def _get_openai_client() -> OpenAI:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY is not set.")
+    base_url = os.getenv("OPENAI_BASE_URL")
+    return OpenAI(api_key=api_key, base_url=base_url, http_client=_HTTP_CLIENT)
 
 def is_any_element_contained(list1: List[str], list2: List[str]) -> bool:
     """
@@ -18,13 +47,11 @@ def is_any_element_contained(list1: List[str], list2: List[str]) -> bool:
         return any(str1 in str2 for str1 in list1 for str2 in list2)
 
 def call_openai_with_retry(model, system_prompt, prompt, temperature, max_tokens, max_retries=5):
+    client = _get_openai_client()
     retries = 0
     while retries < max_retries:
         try:
-            # try your own key.
-            openai.api_key = None
-
-            response = openai.ChatCompletion.create(
+            response = client.chat.completions.create(
                 model=model,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -34,9 +61,9 @@ def call_openai_with_retry(model, system_prompt, prompt, temperature, max_tokens
                 max_tokens=max_tokens,
             )
             return response, retries
-        except openai.error.RateLimitError as e:
-            print(f"Rate limit reached: {e}. Retrying in a few seconds...")
-            time.sleep(5)  # 等待几秒钟后再重试
+        except RETRYABLE_OPENAI_ERRORS as e:
+            print(f"OpenAI API error: {e}. Retrying in a few seconds...")
+            time.sleep(5)
             retries += 1
 
     raise Exception("Max retries reached, could not complete the request")
@@ -153,5 +180,3 @@ if __name__ == "__main__":
     print(evaluate(env, final_state, task, steps_plan, steps_ref))  # Expected: (0.0, 0.0, 0, 'fail', 0)
     #### output
     # (0.0, 0.0, 0, "The robot's steps are incomplete compared to the reference steps. The robot only includes the 'find Window' step, but it misses the crucial 'break Window' step, which is necessary to complete the task. Therefore, the robot's planning results are not capable of completing the task.\n\nRating: [[fail]].", 0)
-
-

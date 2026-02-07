@@ -1,0 +1,7 @@
+sequenceDiagram
+    autonumber
+    participant Eval as evaluator/detail_evaluate.py
+    participant OpenAI as OpenAI API
+
+    Eval->>OpenAI: task + plan + ref plan + rules
+    OpenAI-->>Eval: rating (success/fail) + explanation

@@ -1,4 +1,5 @@
 from openai import OpenAI
+import httpx
 import numpy as np
 from PIL import Image
 import io
@@ -6,15 +7,27 @@ import base64
 import os
 import time
 import sys
+import logging
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from low_level_controller.low_level_controller import LowLevelPlanner
 from ai2thor.controller import Controller
 from utils import gen_low_level_plan, all_objs, execute_low_level_plan
 
 
-api_key = os.getenv('OPENAI_API_KEY')
-client = OpenAI(api_key=api_key)
-gpt_model = 'gpt-4'
+_HTTP_CLIENT = httpx.Client()
+_LOGGER = logging.getLogger(__name__)
+
+
+def _get_openai_client() -> OpenAI:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY is not set.")
+    base_url = os.getenv("OPENAI_BASE_URL")
+    return OpenAI(api_key=api_key, base_url=base_url, http_client=_HTTP_CLIENT)
+
+
+client = _get_openai_client()
+gpt_model = os.getenv("OPENAI_VISION_MODEL", "gpt-4o")
 
 class Table:
     
@@ -28,9 +41,19 @@ class Table:
 
 
 class Agents:
-    def __init__(self,image,task_description):
-        self.encoded_image = image
+    def __init__(self, image, task_description, debug: bool = False):
+        if isinstance(image, np.ndarray):
+            self.encoded_image = self.ndarray_to_base64(image)
+            self.image_shape = image.shape
+            self.image_bytes = image.nbytes
+        elif isinstance(image, str):
+            self.encoded_image = image
+            self.image_shape = None
+            self.image_bytes = None
+        else:
+            raise TypeError("image must be a numpy array or base64 string")
         self.task_description = task_description
+        self.debug = debug
  
     def single_agent_table_planning(self,model_type,file_name_table):
         env_info = Table().get_info_env(file_name_table)
@@ -115,6 +138,12 @@ class Agents:
         return enviroment_info, agent.choices[0].message.content
 
     def single_agent_vision_planning(self):
+        if self.debug:
+            _LOGGER.info(
+                "single_agent_vision_planning: image_shape=%s image_bytes=%s images_sent_to_vlm=1",
+                self.image_shape,
+                self.image_bytes,
+            )
         agent = client.chat.completions.create(
             model=gpt_model,
             messages=[
@@ -150,11 +179,17 @@ class Agents:
     
     def multi_agent_vision_planning(self, objs_from_scene=None):
 
+        if self.debug:
+            _LOGGER.info(
+                "multi_agent_vision_planning: image_shape=%s image_bytes=%s images_sent_to_vlm=2",
+                self.image_shape,
+                self.image_bytes,
+            )
 
         def enviroment_agent():
             # print("__________-")
             agent = client.chat.completions.create(
-            model="gpt-4o",
+            model=gpt_model,
             messages=[
                 {
                 "role": "user",
@@ -200,7 +235,7 @@ class Agents:
             prompt = f"Here is the oracle objects involved in the task: \n{objs_from_scene}\nDo not use any objects not in the scene."
             # print("__________-")
             agent = client.chat.completions.create(
-            model="gpt-4o",
+            model=gpt_model,
             messages=[
                 {
                 "role": "user",
@@ -233,6 +268,8 @@ class Agents:
         # print("_______________\n")
 
         enviroment_info = enviroment_agent() + "\n" + sim_ground_agent(objs_from_scene)
+        if self.debug:
+            _LOGGER.info("map_vlm env_info:\n%s", enviroment_info)
         # print(enviroment_info)
 
         # import pdb; pdb.set_trace()
@@ -295,7 +332,6 @@ def run_map(scene, task):
     img = controller.last_event.frame
     
     agent = Agents(img, task)
-    img = agent.ndarray_to_base64(img)
     
     env_info, plan = agent.multi_agent_vision_planning(objs_all)
 

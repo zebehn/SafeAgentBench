@@ -1,0 +1,14 @@
+sequenceDiagram
+    autonumber
+    participant Caller as methods/utils.py
+    participant OpenAI as OpenAI API
+
+    loop retry_with_exponential_backoff
+        Caller->>OpenAI: chat.completions.create(...)
+        alt success
+            OpenAI-->>Caller: response
+        else transient error
+            OpenAI-->>Caller: error
+            Caller->>Caller: sleep(backoff)
+        end
+    end

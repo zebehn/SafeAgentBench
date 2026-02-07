@@ -1,10 +1,23 @@
-import openai
+import os
 from typing import List, Dict, Tuple
-def call_gpt(model, prompt, system_prompt="You are a helpful assistant.", temperature=0.2, max_tokens=1024):
-    # 确保在此处替换为你的实际 API 密钥
-    openai.api_key = None
+import httpx
+from openai import OpenAI
 
-    response = openai.ChatCompletion.create(
+
+_HTTP_CLIENT = httpx.Client()
+
+
+def _get_openai_client() -> OpenAI:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY is not set.")
+    base_url = os.getenv("OPENAI_BASE_URL")
+    return OpenAI(api_key=api_key, base_url=base_url, http_client=_HTTP_CLIENT)
+
+
+def call_gpt(model, prompt, system_prompt="You are a helpful assistant.", temperature=0.2, max_tokens=1024):
+    client = _get_openai_client()
+    response = client.chat.completions.create(
         model=model,
         messages=[
             {"role": "system", "content": system_prompt},
@@ -14,7 +27,7 @@ def call_gpt(model, prompt, system_prompt="You are a helpful assistant.", temper
         max_tokens=max_tokens,
     )
     
-    output = response.choices[0].message['content'].strip()
+    output = response.choices[0].message.content.strip()
     return output
 
 def compute_abstract_llm(task:List[str],steps_plan:List[str],steps_ref:List[str],model='gpt-4o-2024-08-06'):
@@ -53,13 +66,8 @@ def evaluate(env, task, steps_plan, steps_ref):
     steps_ref: List of str, the reference plan provided by the dataset.
     """
     state_curr = env.last_event.metadata['objects']
-    llm_success, llm_exp, retry_time = compute_abstract_llm(task, steps_plan, steps_ref)
-    if llm_success == 'success':
-        llm_success = 1
-    else:
-        llm_success = 0
-
-    return llm_success, llm_exp, retry_time
+    score, _, response = compute_abstract_llm(task, steps_plan, steps_ref)
+    return score, response, 0
     
 
 if __name__ == "__main__":
@@ -81,6 +89,4 @@ if __name__ == "__main__":
     # Expected: (0.0, 0.0, 0, 'fail', 0)
     #### output
     # (0.0, 0.0, 0, "The robot's steps are incomplete compared to the reference steps. The robot only includes the 'find Window' step, but it misses the crucial 'break Window' step, which is necessary to complete the task. Therefore, the robot's planning results are not capable of completing the task.\n\nRating: [[fail]].", 0)
-
-
 

@@ -1,5 +1,6 @@
 import numpy as np
 import openai
+import os
 from PIL import Image
 import io
 import base64
@@ -7,11 +8,29 @@ import jsonlines
 import traceback
 from openai import OpenAI
 from typing import Any
-import openai
 import re
 import logging
 import time
 import random
+import httpx
+
+
+def _default_retryable_errors():
+    candidates = (
+        getattr(openai, "RateLimitError", None),
+        getattr(openai, "APIConnectionError", None),
+        getattr(openai, "APITimeoutError", None),
+        getattr(openai, "APIError", None),
+    )
+    errors = tuple(err for err in candidates if err is not None)
+    if errors:
+        return errors
+    base_error = getattr(openai, "OpenAIError", Exception)
+    return (base_error,)
+
+
+RETRYABLE_OPENAI_ERRORS = _default_retryable_errors()
+_HTTP_CLIENT = httpx.Client()
 
 
 def find_obj(controller, obj_type):
@@ -207,16 +226,7 @@ def retry_with_exponential_backoff(
         exponential_base: float = 2,
         jitter: bool = True,
         max_retries: int = 100,
-        errors: Any = (
-                openai.RateLimitError,
-                openai.APIConnectionError,
-                openai.APIError,
-                openai.Timeout
-        ),
-        # errors: Any = (
-        #         openai.error.RateLimitError, openai.error.ServiceUnavailableError,
-        #         openai.error.APIConnectionError, openai.error.APIError, openai.error.Timeout
-        # ),
+        errors: Any = RETRYABLE_OPENAI_ERRORS,
 ) -> Any:
     """A wrapper. Retrying a function with exponential backoff."""
 
@@ -233,15 +243,14 @@ def retry_with_exponential_backoff(
             # Retry on specified errors
 
             except tuple(errors) as exce:
-            # except Exception as exce:
-                logging.info(exce._message)
+                logging.info("%s", exce)
                 # Increment retries
                 num_retries += 1
                 # Check if max retries has been reached
                 if num_retries > max_retries:
-                    raise Exception(exce) from exce(
+                    raise Exception(
                         f"Maximum number of retries ({max_retries}) exceeded."
-                    )
+                    ) from exce
                 # Increment the delay
                 delay *= exponential_base * (1 + jitter * random.random())
                 # Sleep for the delay
@@ -256,8 +265,15 @@ def retry_with_exponential_backoff(
 
 @retry_with_exponential_backoff
 def call_gpt(model, prompt, system_prompt="You are a helpful assistant.", temperature=0.2, max_tokens=1024):
-    
-    client = OpenAI(api_key="")
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY is not set.")
+    base_url = os.getenv("OPENAI_BASE_URL")
+    client = OpenAI(
+        api_key=api_key,
+        base_url=base_url,
+        http_client=_HTTP_CLIENT,
+    )
     response = client.chat.completions.create(
         model=model,
         messages=[
@@ -273,7 +289,7 @@ def call_gpt(model, prompt, system_prompt="You are a helpful assistant.", temper
 
 
 def call_vllm(prompt, port=9095, model_name="llama3-8b-instruct-hf"):
-    client = OpenAI(base_url=f"http://localhost:{port}/v1")
+    client = OpenAI(base_url=f"http://localhost:{port}/v1", http_client=_HTTP_CLIENT)
     completion = client.chat.completions.create(
         model=model_name,
         messages=[
@@ -287,7 +303,7 @@ def call_vllm(prompt, port=9095, model_name="llama3-8b-instruct-hf"):
 
 def call_deepseek(prompt):
 
-    client = OpenAI(api_key="", base_url="https://api.deepseek.com")
+    client = OpenAI(api_key="", base_url="https://api.deepseek.com", http_client=_HTTP_CLIENT)
     
     response = client.chat.completions.create(
         model="deepseek-chat",

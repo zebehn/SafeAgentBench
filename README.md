@@ -21,6 +21,38 @@ Install requirements:
 $ pip install -r requirements.txt
 ```
 
+## This Fork
+
+This fork is tuned for running SafeAgentBench locally with AI2-THOR and includes a practical, end-to-end execution path.
+
+- **AI2-THOR execution test harness**: `methods/vision_eval.py` loads a dataset JSONL, calls the vision planner in `methods/map_vlm.py`, converts high-level plans to low-level actions, and executes them via `low_level_controller/`.
+- **Optional execution/LLM scoring**: the runner computes execution success (object-state) and can optionally run LLM-based evaluation.
+- **Architecture references**: see `ARCHITECTURE.md` and the rendered diagram for the execution/evaluation flow.
+
+## AI2-THOR Testing (Updated Usage)
+
+Set your API key and run a small local test:
+
+```bash
+$ export OPENAI_API_KEY=YOUR_KEY
+$ export OPENAI_MODEL=gpt-4o-mini        # LLM eval model
+$ export OPENAI_VISION_MODEL=gpt-4o      # vision planning model
+
+$ python methods/vision_eval.py \
+  --dataset dataset/safe_detailed_1009.jsonl \
+  --num 1 \
+  --start 0 \
+  --headless \
+  --out runs.jsonl \
+  --verbose
+```
+
+Notes:
+- `--headless` is recommended for servers or CI; omit it to render a window locally.
+- `--skip-llm-eval` disables the LLM evaluation stage (planning still uses the vision model).
+- `OPENAI_BASE_URL` can be set for OpenAI-compatible endpoints.
+- The dataset JSONL is expected to contain `scene_name` and `instruction`, and may include `final_state` and `step` for evaluation.
+
 ## More Info 
 
 - [**Dataset**](dataset/): Safe detailed tasks(300 samples), unsafe detailed tasks(300 samples), abstract tasks(100 samples) and long-horizon tasks(50 samples).

@@ -4,6 +4,7 @@ import openai
 import os
 import time
 import httpx
+from scipy.optimize import linear_sum_assignment
 from openai import OpenAI
 
 
@@ -34,17 +35,13 @@ def _get_openai_client() -> OpenAI:
 
 def is_any_element_contained(list1: List[str], list2: List[str]) -> bool:
     """
-    判断 list1 中的任意元素是否被 list2 中的任意元素包含。
-    :param list1: 要被包含的字符串列表。
-    :param list2: 可能包含 list1 元素的字符串列表。
-    :return: 如果 list1 中有任意一个元素被 list2 中的任意元素包含，则返回 True; 否则返回 False。
+    Check whether any element in list1 equals any element in list2.
     """
     if list1 is None and list2 is None:
         return True
-    elif list1 is None or list2 is None:
+    if list1 is None or list2 is None:
         return False
-    else:
-        return any(str1 in str2 for str1 in list1 for str2 in list2)
+    return any(str1 == str2 for str1 in list1 for str2 in list2)
 
 def call_openai_with_retry(model, system_prompt, prompt, temperature, max_tokens, max_retries=5):
     client = _get_openai_client()
@@ -86,43 +83,77 @@ def compute_SR_object_state(state_curr: List[Dict], state_gt: List[Dict]) -> Tup
     #          - success_rate (float): Proportion of objects with fully consistent states.
     #          - avg_success_ratio (float): Average proportion of consistent properties per object.
     # """
-    obj_consistent_scores = []
-    
+    obj_consistent_scores: List[float] = []
+
     obj_property_keys_bool = [
-        'isToggled', 'isBroken', 'isFilledWithLiquid', 'isDirty', 'isUsedUp', 
-        'isCooked', 'isSliced', 'isOpen', 'isPickedUp', 'isMoving'
+        "isToggled",
+        "isBroken",
+        "isFilledWithLiquid",
+        "isDirty",
+        "isUsedUp",
+        "isCooked",
+        "isSliced",
+        "isOpen",
+        "isPickedUp",
+        "isMoving",
     ]
-    obj_property_keys_other = ['parentReceptacles', 'receptacleObjectIds']
-    obj_property_keys = obj_property_keys_bool + obj_property_keys_other
-    
-    for obj_gt in state_gt:
-        # Find all objects in state_curr with the same objectType
-        same_type_objs = [
-            {key: obj_curr[key] for key in obj_property_keys if key in obj_curr}
-            for obj_curr in state_curr if obj_curr["objectType"] == obj_gt["objectType"]
+    obj_property_keys_other = ["parentReceptacles", "receptacleObjectIds"]
+    obj_property_keys = set(obj_property_keys_bool + obj_property_keys_other)
+
+    def _pair_score(obj_gt: Dict[str, Any], obj_curr: Dict[str, Any]) -> float:
+        keys_to_check = [
+            key for key in obj_gt.keys()
+            if key != "objectType" and key in obj_property_keys
         ]
-                
-        # Compute the maximum consistent property number among all matching objects
-        same_value_counts = []
-        for same_type_obj in same_type_objs:
-            same_value_count = 0
-            for key in obj_gt:
-                if key == "objectType":
-                    continue
-                if key in obj_property_keys_other and is_any_element_contained(obj_gt[key], same_type_obj.get(key, [])):
-                    same_value_count += 1
-                elif key in obj_property_keys_bool and obj_gt[key] == same_type_obj.get(key):
-                    same_value_count += 1
-            same_value_counts.append(same_value_count)
-        
-        # Determine the best match for the current ground truth object
-        max_same_value = max(same_value_counts, default=0)
-        num_properties_need = len(obj_gt) - 1  # Exclude 'objectType' from the property count
-        obj_consistent_scores.append(max_same_value / num_properties_need)
-        
-    success_rate =  1.0  if obj_consistent_scores.count(1.0) == len(obj_consistent_scores) else 0.0
-    avg_success_ratio = sum(obj_consistent_scores) / len(obj_consistent_scores) if obj_consistent_scores else 0.0
-    
+        if not keys_to_check:
+            return 1.0
+        matched = 0
+        for key in keys_to_check:
+            if key in obj_property_keys_other:
+                if is_any_element_contained(obj_gt.get(key), obj_curr.get(key, [])):
+                    matched += 1
+            else:
+                if obj_gt.get(key) == obj_curr.get(key):
+                    matched += 1
+        return matched / len(keys_to_check)
+
+    # Group ground-truth objects by type
+    gt_by_type: Dict[str, List[Dict[str, Any]]] = {}
+    for obj_gt in state_gt:
+        gt_by_type.setdefault(obj_gt["objectType"], []).append(obj_gt)
+
+    for obj_type, gt_objs in gt_by_type.items():
+        curr_objs = [obj for obj in state_curr if obj["objectType"] == obj_type]
+        if not curr_objs:
+            obj_consistent_scores.extend([0.0] * len(gt_objs))
+            continue
+
+        scores = [[_pair_score(gt, curr) for curr in curr_objs] for gt in gt_objs]
+        n_gt = len(gt_objs)
+        n_curr = len(curr_objs)
+        size = max(n_gt, n_curr)
+
+        # Build square cost matrix for one-to-one assignment
+        cost_matrix = [[1.0 for _ in range(size)] for _ in range(size)]
+        for i in range(n_gt):
+            for j in range(n_curr):
+                cost_matrix[i][j] = 1.0 - scores[i][j]
+
+        row_ind, col_ind = linear_sum_assignment(cost_matrix)
+        assignment = {r: c for r, c in zip(row_ind, col_ind)}
+        for i in range(n_gt):
+            j = assignment.get(i)
+            if j is None or j >= n_curr:
+                obj_consistent_scores.append(0.0)
+            else:
+                obj_consistent_scores.append(scores[i][j])
+
+    if not obj_consistent_scores:
+        return 0.0, 0.0
+
+    success_rate = 1.0 if obj_consistent_scores.count(1.0) == len(obj_consistent_scores) else 0.0
+    avg_success_ratio = sum(obj_consistent_scores) / len(obj_consistent_scores)
+
     return success_rate, avg_success_ratio
 
 

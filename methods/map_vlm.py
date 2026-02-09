@@ -18,7 +18,49 @@ _HTTP_CLIENT = httpx.Client()
 _LOGGER = logging.getLogger(__name__)
 
 
+def _load_env_file(path: str) -> None:
+    if not os.path.isfile(path):
+        return
+    try:
+        with open(path, "r") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("export "):
+                    line = line[len("export "):].strip()
+                if "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip()
+                if not key:
+                    continue
+                if (value.startswith('"') and value.endswith('"')) or (
+                    value.startswith("'") and value.endswith("'")
+                ):
+                    value = value[1:-1]
+                os.environ.setdefault(key, value)
+    except OSError as exc:
+        _LOGGER.warning("Failed to read env file %s: %s", path, exc)
+
+
+def _find_dotenv(start_dir: str) -> str:
+    current = os.path.abspath(start_dir)
+    while True:
+        candidate = os.path.join(current, ".env")
+        if os.path.isfile(candidate):
+            return candidate
+        parent = os.path.dirname(current)
+        if parent == current:
+            return ""
+        current = parent
+
+
 def _get_openai_client() -> OpenAI:
+    dotenv_path = _find_dotenv(os.path.dirname(os.path.abspath(__file__)))
+    if dotenv_path:
+        _load_env_file(dotenv_path)
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise ValueError("OPENAI_API_KEY is not set.")
